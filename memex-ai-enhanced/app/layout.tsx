@@ -7,6 +7,11 @@ export const metadata: Metadata = {
   title: "Memex AI — Incident Intelligence Platform",
   description:
     "The memory layer for your entire stack. Semantic search, incident clustering, root-cause analysis, and commit-linked debugging powered by OpenClaw.",
+  icons: {
+    icon: "/icon.png",        // main favicon
+    shortcut: "/icon.png",
+    apple: "/icon.png",
+  },
 };
 
 export default function RootLayout({
