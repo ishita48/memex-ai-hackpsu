@@ -1,0 +1,38 @@
+name: Memex AI — CI Failure Reporter
+
+# Triggers when ANY workflow in this repo completes with a failure
+on:
+  workflow_run:
+    workflows: ["*"]
+    types: [completed]
+
+jobs:
+  report-failure:
+    # Only run when the triggering workflow failed
+    if: ${{ github.event.workflow_run.conclusion == 'failure' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report CI Failure to Memex AI
+        env:
+          MEMEX_URL: ${{ secrets.MEMEX_URL }}
+          MEMEX_API_KEY: ${{ secrets.MEMEX_API_KEY }}
+        run: |
+          curl -s -X POST "${MEMEX_URL}/api/webhook/github" \
+            -H "Content-Type: application/json" \
+            -H "x-api-key: ${MEMEX_API_KEY}" \
+            -d "{
+              \"type\": \"error\",
+              \"source\": \"github-actions\",
+              \"content\": \"CI workflow '${GITHUB_WORKFLOW}' failed on branch '${GITHUB_REF_NAME}' — commit ${GITHUB_SHA:0:7} by ${GITHUB_ACTOR}\",
+              \"severity\": \"high\",
+              \"title\": \"CI Failed: ${GITHUB_WORKFLOW} on ${GITHUB_REF_NAME}\",
+              \"commit\": \"${GITHUB_SHA:0:7}\",
+              \"metadata\": {
+                \"repo\": \"${GITHUB_REPOSITORY}\",
+                \"branch\": \"${GITHUB_REF_NAME}\",
+                \"run_url\": \"${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}\",
+                \"actor\": \"${GITHUB_ACTOR}\",
+                \"workflow\": \"${GITHUB_WORKFLOW}\"
+              }
+            }"
+          echo "✅ CI failure reported to Memex AI"

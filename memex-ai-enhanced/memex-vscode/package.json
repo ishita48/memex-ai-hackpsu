@@ -1,0 +1,89 @@
+{
+  "name": "memex-ai",
+  "displayName": "Memex AI — Incident Intelligence",
+  "description": "Search your system's memory, get AI root cause analysis, and debug faster — right from VS Code.",
+  "version": "1.0.0",
+  "publisher": "memex-ai",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Other", "Debuggers"],
+  "activationEvents": [],
+  "main": "./out/extension.js",
+  "icon": "icon.png",
+  "contributes": {
+    "commands": [
+      {
+        "command": "memex.searchMemory",
+        "title": "Memex: Search Memory"
+      },
+      {
+        "command": "memex.explainError",
+        "title": "Memex: Explain Error"
+      },
+      {
+        "command": "memex.ingestError",
+        "title": "Memex: Store in Memory"
+      },
+      {
+        "command": "memex.explainLine",
+        "title": "Memex: Explain This Line"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "memex.searchMemory",
+          "group": "memex@1",
+          "when": "editorHasSelection"
+        },
+        {
+          "command": "memex.explainError",
+          "group": "memex@2",
+          "when": "editorHasSelection"
+        },
+        {
+          "command": "memex.ingestError",
+          "group": "memex@3",
+          "when": "editorHasSelection"
+        },
+        {
+          "command": "memex.explainLine",
+          "group": "memex@4"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Memex AI",
+      "properties": {
+        "memex.apiUrl": {
+          "type": "string",
+          "default": "http://localhost:3000",
+          "description": "URL of your deployed Memex AI instance"
+        },
+        "memex.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Your Memex API key (from Settings page)"
+        },
+        "memex.autoIngest": {
+          "type": "boolean",
+          "default": false,
+          "description": "Automatically ingest errors detected in terminal output"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "npx @vscode/vsce package --no-dependencies",
+    "lint": "eslint src --ext ts"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^2.22.0",
+    "typescript": "^5.4.0"
+  }
+}
