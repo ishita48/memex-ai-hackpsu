@@ -1,6 +1,6 @@
 # 🧠 Memex AI v2.0 — Incident Intelligence Engine
 
-> **Turn logs into memory. Turn memory into decisions.**
+> **Turn logs into memory. Turn memory into decisions**
 
 Memex AI is an AI-powered incident intelligence system that ingests logs, clusters related events into incidents, and uses hybrid semantic search + LLM reasoning to identify root causes, suggest fixes, detect patterns, and improve over time through user feedback.
 
