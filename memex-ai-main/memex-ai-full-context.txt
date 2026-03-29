@@ -1,0 +1,699 @@
+================================================================================
+MEMEX AI — COMPLETE PROJECT CONTEXT & SESSION HISTORY
+================================================================================
+Last Updated: March 2026
+Author: Isha
+Status: v2.0 — Working locally, not yet deployed
+================================================================================
+
+TABLE OF CONTENTS
+1. Project Overview
+2. Tech Stack
+3. Architecture
+4. Complete File Structure
+5. Database Schema (Supabase SQL)
+6. Core Engine (lib/memory.ts)
+7. API Routes
+8. Frontend Components
+9. Key Configuration Files
+10. Current State & What's Working
+11. Known Issues & Fixes Applied
+12. Stream Simulator
+13. Feature Roadmap (Prioritized)
+14. Brutal Weaknesses Identified
+15. Hackathon Strategy (Sentry × Comcast × Base44)
+16. Demo Script for Judges
+17. Resume Description
+18. Next Session TODO
+
+================================================================================
+1. PROJECT OVERVIEW
+================================================================================
+
+Memex AI is an AI-powered incident intelligence system that turns logs, errors,
+and events into searchable, clustered, actionable memory.
+
+Core value proposition:
+"Every company collects logs. Nobody can search them by meaning. We fix that."
+
+One-liner pitch:
+"Today Sentry tells you an error happened. We tell you WHEN it happened before,
+HOW it was fixed, and WHICH commit resolved it. That's the difference between
+observability and intelligence."
+
+What it does:
+- Ingest: Accept logs via paste, structured form, file upload (JSON/CSV/TXT), or API
+- Embed: Convert text to vectors using OpenAI text-embedding-3-small
+- Store: Save in Supabase PostgreSQL with pgvector extension
+- Search: Hybrid search (vector cosine similarity + keyword matching)
+- Reason: GPT-4o-mini analyzes results and explains root cause, impact, fix, pattern
+- Cluster: Automatically group similar events into incidents
+- Alert: Auto-fire alerts for critical/high severity events
+- Feedback: Users rate results as helpful/not helpful, improving future rankings
+- Rerank: Results boosted by feedback score + recency decay
+
+Three sponsor modes (same backend, different data types):
+- Sentry mode → errors (NullPointerException, timeouts, memory leaks)
+- Comcast mode → network events (bandwidth spikes, latency, DNS failures)
+- Base44 mode → API/infra events (schema rollbacks, deploy failures, OOMKills)
+
+================================================================================
+2. TECH STACK
+================================================================================
+
+Frontend:
+- Next.js 14 (App Router)
+- React 18
+- Tailwind CSS
+- TypeScript
+- JetBrains Mono font (terminal aesthetic)
+
+Backend:
+- Next.js API Routes (serverless)
+- OpenAI API (text-embedding-3-small for embeddings, gpt-4o-mini for reasoning)
+
+Database:
+- Supabase (hosted PostgreSQL)
+- pgvector extension (cosine similarity search)
+- 3 tables: memories, incidents, alerts
+- 3 custom SQL functions: match_memories_hybrid, find_similar_memory, get_incidents
+
+Auth:
+- Clerk (NextJS middleware, sign-in/sign-up, user button)
+
+Tooling:
+- Stream simulator (Node.js script, sends logs every 5 seconds)
+
+================================================================================
+3. ARCHITECTURE
+================================================================================
+
+User → Next.js Dashboard → API Routes → Memory Engine → Supabase (pgvector)
+                                ↓
+                             OpenAI
+                          (embeddings + reasoning)
+
+INGEST FLOW:
+1. User submits log (paste/form/file/API)
+2. POST /api/ingest
+3. lib/memory.ts → embed(content) → OpenAI embedding
+4. find_similar_memory() → check if similar event exists (threshold 0.82)
+5. If similar → reuse incident_id (cluster into existing incident)
+6. If new → create new incident in incidents table
+7. Insert memory with embedding + incident_id
+8. If severity = critical/high → create alert in alerts table
+9. Return { id, incident_id, is_new_incident, alert_triggered }
+
+QUERY FLOW:
+1. User types question
+2. POST /api/query
+3. lib/memory.ts → embed(question) → OpenAI embedding
+4. match_memories_hybrid() → vector search + keyword search combined
+5. Rerank results by: similarity + feedback_score boost + recency decay
+6. Pass top 5 results to GPT-4o-mini for structured reasoning
+7. Check for pattern (multiple incidents in results)
+8. Return { results, reasoning, pattern }
+
+BROWSE FLOW:
+1. User presses Enter with empty query
+2. POST /api/query (no question)
+3. lib/memory.ts → browse() → simple SELECT ordered by created_at
+4. Return results without reasoning
+
+================================================================================
+4. COMPLETE FILE STRUCTURE
+================================================================================
+
+memex-ai-project/
+├── app/
+│   ├── globals.css                  ← Tailwind + custom animations
+│   ├── layout.tsx                   ← Root layout with ClerkProvider
+│   ├── page.tsx                     ← Landing page (marketing)
+│   ├── dashboard/
+│   │   ├── layout.tsx               ← Dashboard layout with UserButton
+│   │   └── page.tsx                 ← Main dashboard (all 4 views)
+│   └── api/
+│       ├── ingest/route.ts          ← POST: store + embed + cluster + alert
+│       ├── query/route.ts           ← POST: hybrid search + AI reasoning
+│       ├── incidents/route.ts       ← GET: list incidents, PATCH: update status
+│       ├── feedback/route.ts        ← POST: helpful/not_helpful/resolve
+│       └── alerts/route.ts          ← GET: list alerts, PATCH: acknowledge
+├── lib/
+│   ├── memory.ts                    ← CORE ENGINE (~300 lines, entire product)
+│   ├── openai.ts                    ← OpenAI client initialization
+│   └── supabase.ts                  ← Supabase client initialization
+├── components/
+│   ├── SearchBar.tsx                ← Terminal-style search input
+│   ├── MemoryList.tsx               ← Result cards with feedback buttons
+│   ├── ResultCard.tsx               ← AI reasoning panel
+│   ├── StatsBar.tsx                 ← Result count, critical, resolved, avg match
+│   ├── IngestPanel.tsx              ← 3 modes: paste, structured, file upload
+│   ├── IncidentList.tsx             ← Grouped incidents with expand/actions
+│   └── AlertBanner.tsx              ← Alert list with acknowledge
+├── types/
+│   └── index.ts                     ← TypeScript interfaces
+├── scripts/
+│   └── stream-simulator.js         ← Sends random logs every 5 seconds
+├── middleware.ts                    ← Clerk auth (protects /dashboard)
+├── supabase-setup-v2.sql           ← Full database schema
+├── package.json
+├── tsconfig.json
+├── tailwind.config.ts
+├── postcss.config.js
+├── next.config.js
+├── .env.local                       ← API keys (not committed)
+├── .env.local.example
+├── .gitignore
+└── README.md
+
+================================================================================
+5. DATABASE SCHEMA (SUPABASE SQL — V2)
+================================================================================
+
+NOTE: Run these one at a time in Supabase SQL Editor, or all at once using
+"Run" (NOT "Explain").
+
+--- FULL SQL (run as one block) ---
+
+create extension if not exists vector;
+
+drop table if exists alerts cascade;
+drop table if exists memories cascade;
+drop table if exists incidents cascade;
+
+create table memories (
+  id uuid primary key default gen_random_uuid(),
+  type text not null,
+  source text not null,
+  content text not null,
+  metadata jsonb default '{}',
+  embedding vector(1536),
+  incident_id uuid,
+  feedback_score int default 0,
+  resolved boolean default false,
+  resolved_at timestamptz,
+  resolved_by text,
+  created_at timestamptz default now()
+);
+
+create table incidents (
+  id uuid primary key default gen_random_uuid(),
+  type text not null,
+  title text,
+  severity text default 'medium',
+  status text default 'open',
+  event_count int default 1,
+  first_seen timestamptz default now(),
+  last_seen timestamptz default now(),
+  root_cause text,
+  fix text,
+  metadata jsonb default '{}'
+);
+
+create table alerts (
+  id uuid primary key default gen_random_uuid(),
+  incident_id uuid references incidents(id),
+  memory_id uuid references memories(id),
+  severity text not null,
+  title text not null,
+  message text,
+  acknowledged boolean default false,
+  created_at timestamptz default now()
+);
+
+create index if not exists memories_embedding_idx on memories using ivfflat (embedding vector_cosine_ops) with (lists = 100);
+create index if not exists memories_type_idx on memories(type);
+create index if not exists memories_incident_idx on memories(incident_id);
+create index if not exists memories_created_idx on memories(created_at desc);
+create index if not exists incidents_status_idx on incidents(status);
+create index if not exists alerts_ack_idx on alerts(acknowledged);
+
+create or replace function match_memories_hybrid(
+  query_embedding vector(1536),
+  query_text text,
+  match_threshold float,
+  match_count int,
+  filter_type text
+)
+returns table (
+  id uuid, type text, source text, content text, metadata jsonb,
+  incident_id uuid, feedback_score int, resolved boolean,
+  created_at timestamptz, similarity float
+)
+language sql stable
+as $$
+  select
+    m.id, m.type, m.source, m.content, m.metadata,
+    m.incident_id, m.feedback_score, m.resolved, m.created_at,
+    greatest(
+      1 - (m.embedding <=> query_embedding),
+      case
+        when m.content ilike '%' || query_text || '%' then 0.5
+        when m.metadata::text ilike '%' || query_text || '%' then 0.4
+        else 0
+      end
+    ) as similarity
+  from memories m
+  where m.type = filter_type
+    and (
+      1 - (m.embedding <=> query_embedding) > match_threshold
+      or m.content ilike '%' || query_text || '%'
+      or m.metadata::text ilike '%' || query_text || '%'
+    )
+  order by similarity desc
+  limit match_count;
+$$;
+
+create or replace function find_similar_memory(
+  query_embedding vector(1536),
+  similarity_threshold float,
+  filter_type text
+)
+returns table (id uuid, incident_id uuid, similarity float)
+language sql stable
+as $$
+  select m.id, m.incident_id, 1 - (m.embedding <=> query_embedding) as similarity
+  from memories m
+  where m.type = filter_type
+    and m.incident_id is not null
+    and 1 - (m.embedding <=> query_embedding) > similarity_threshold
+  order by m.embedding <=> query_embedding
+  limit 1;
+$$;
+
+create or replace function get_incidents(
+  filter_type text,
+  filter_status text default null,
+  result_limit int default 20
+)
+returns table (
+  id uuid, type text, title text, severity text, status text,
+  event_count bigint, first_seen timestamptz, last_seen timestamptz,
+  root_cause text, fix text, metadata jsonb
+)
+language sql stable
+as $$
+  select
+    i.id, i.type, i.title, i.severity, i.status,
+    count(m.id) as event_count,
+    i.first_seen, i.last_seen, i.root_cause, i.fix, i.metadata
+  from incidents i
+  left join memories m on m.incident_id = i.id
+  where i.type = filter_type
+    and (filter_status is null or i.status = filter_status)
+  group by i.id
+  order by i.last_seen desc
+  limit result_limit;
+$$;
+
+================================================================================
+6. CORE ENGINE (lib/memory.ts) — KEY FUNCTIONS
+================================================================================
+
+embed(text) → number[]
+  - Calls OpenAI text-embedding-3-small
+  - Returns 1536-dimension vector
+
+ingest(entry) → IngestResult
+  - Embeds content
+  - Checks for similar existing memory (threshold 0.82)
+  - If similar → reuses incident_id (clustering)
+  - If new → creates incident in incidents table
+  - Inserts memory with embedding
+  - Fires alert if severity is critical/high
+  - Returns { id, incident_id, is_new_incident, alert_triggered }
+
+query(question, mode, matchCount=10, threshold=0.25) → QueryResult
+  - Embeds question
+  - Calls match_memories_hybrid (vector + keyword)
+  - Reranks by: similarity + feedback boost + recency decay
+  - Sends top 5 to GPT-4o-mini for structured reasoning
+  - Checks for incident patterns across results
+  - Returns { results, reasoning, pattern }
+
+browse(type, limit=20) → Memory[]
+  - Simple SELECT from memories filtered by type
+  - Ordered by created_at DESC
+
+getIncidents(mode, status?) → Incident[]
+  - Calls get_incidents SQL function
+  - Returns grouped incidents with event counts
+
+getIncidentMemories(incidentId) → Memory[]
+  - All memories linked to a specific incident
+
+updateIncidentStatus(incidentId, status, rootCause?, fix?)
+  - Updates incident status (open/investigating/resolved)
+
+submitFeedback(memoryId, delta)
+  - Increments/decrements feedback_score on a memory
+
+getAlerts(acknowledged?) → Alert[]
+  - Lists alerts, optionally filtered by acknowledged status
+
+acknowledgeAlert(alertId)
+  - Marks alert as acknowledged
+
+resolveMemory(memoryId, resolvedBy?)
+  - Marks memory as resolved with timestamp
+
+================================================================================
+7. API ROUTES
+================================================================================
+
+POST /api/ingest
+  Body: { type, source, content, metadata }
+  Returns: { success, id, incident_id, is_new_incident, alert_triggered, message }
+
+POST /api/query
+  Body: { question, mode }
+  Returns: { results, reasoning, pattern }
+  If question is empty: returns browse results (no reasoning)
+
+GET /api/incidents?mode=sentry&status=open
+  Returns: { incidents }
+GET /api/incidents?id=<uuid>
+  Returns: { memories } (all memories for that incident)
+PATCH /api/incidents
+  Body: { id, status, root_cause?, fix? }
+  Returns: { success }
+
+POST /api/feedback
+  Body: { memory_id, action } (action = "helpful" | "not_helpful" | "resolve")
+  Returns: { success }
+
+GET /api/alerts?unread=true
+  Returns: { alerts }
+PATCH /api/alerts
+  Body: { id }
+  Returns: { success }
+
+================================================================================
+8. FRONTEND COMPONENTS
+================================================================================
+
+Dashboard (app/dashboard/page.tsx):
+  - 4 views: Query, Incidents, Ingest, Alerts
+  - 3 mode tabs: Sentry, Comcast, Base44
+  - Alert badge count on Alerts tab
+  - State: mode, query, results, reasoning, pattern, isSearching, view, error, alertCount
+
+SearchBar.tsx:
+  - Terminal-style input with $ prompt
+  - Color-coded per mode
+  - Search button + Enter key support
+
+MemoryList.tsx:
+  - Expandable cards with severity badges, source tags, timestamps
+  - Similarity percentage display
+  - Feedback buttons: 👍 Helpful, 👎 Not relevant, ✓ Mark Resolved
+  - Incident ID reference
+  - Metadata tags in expanded view
+
+ResultCard.tsx:
+  - AI reasoning panel with gradient background
+  - Loading state with pulse animation
+  - Displays structured reasoning from GPT-4o-mini
+
+StatsBar.tsx:
+  - Results count, critical count, resolved count, average match %
+
+IngestPanel.tsx:
+  - 3 sub-tabs: Paste Log, Structured Entry, Upload File
+  - Paste: textarea + source + severity dropdown
+  - Structured: title, source, service, severity, content, commit hash, extra JSON metadata
+  - Upload: accepts .json, .csv, .txt, .log files
+  - CSV parser built in
+  - Bulk import with progress counter
+
+IncidentList.tsx:
+  - Filter tabs: All, Open, Investigating, Resolved
+  - Cards with status badges, severity badges, event counts
+  - Expandable with: Investigate/Resolve/Reopen buttons
+  - First seen / Last seen timestamps
+  - Related events list (up to 5 shown)
+
+AlertBanner.tsx:
+  - Filter: Unread / All
+  - Acknowledge individual or all
+  - Severity color-coded
+  - Timestamp display
+
+================================================================================
+9. KEY CONFIGURATION
+================================================================================
+
+.env.local (DO NOT COMMIT):
+  NEXT_PUBLIC_SUPABASE_URL=https://YOUR_PROJECT.supabase.co
+  SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+  OPENAI_API_KEY=sk-your-openai-key
+  NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_...
+  CLERK_SECRET_KEY=sk_test_...
+  NEXT_PUBLIC_CLERK_SIGN_IN_URL=/sign-in
+  NEXT_PUBLIC_CLERK_SIGN_UP_URL=/sign-up
+
+middleware.ts:
+  - Uses clerkMiddleware
+  - Protects /dashboard(.*)
+  - auth() is called as function: await auth().protect()
+
+package.json dependencies:
+  @clerk/nextjs ^5.0.0
+  @supabase/supabase-js ^2.43.0
+  next 14.2.0
+  openai ^4.47.0
+  react ^18.3.0
+  tailwindcss ^3.4.3
+
+================================================================================
+10. CURRENT STATE & WHAT'S WORKING
+================================================================================
+
+✅ Working:
+  - Dashboard loads at localhost:3000/dashboard
+  - All 4 tabs render (Query, Incidents, Ingest, Alerts)
+  - 3 mode switches (Sentry, Comcast, Base44)
+  - Ingest → embeds → stores in Supabase → clusters into incidents → fires alerts
+  - Query → hybrid search → AI reasoning → pattern detection
+  - Feedback buttons work (helpful/not helpful/resolve)
+  - Incident status updates (investigate/resolve/reopen)
+  - Alert acknowledge works
+  - Stream simulator sends logs every 5 seconds
+  - File upload (JSON/CSV/TXT) works
+  - Landing page at localhost:3000
+
+✅ Database:
+  - Supabase tables created: memories, incidents, alerts
+  - pgvector extension enabled
+  - 3 SQL functions: match_memories_hybrid, find_similar_memory, get_incidents
+  - Indexes on embedding, type, incident_id, created_at, status, acknowledged
+
+⚠️ Minor:
+  - page.tsx shows 2 TypeScript warnings (non-breaking, works at runtime)
+  - Windows had issues with (dashboard) route group — fixed by using dashboard/ instead
+
+================================================================================
+11. KNOWN ISSUES & FIXES APPLIED
+================================================================================
+
+Issue: 404 on /dashboard
+Fix: Renamed (dashboard) folder to dashboard (Windows doesn't handle parentheses well)
+
+Issue: Clerk middleware auth.protect() not working
+Fix: Changed to auth().protect() — in Clerk v5, auth is a function you call first
+
+Issue: Search returned empty results despite data in DB
+Fix: Lowered similarity threshold from 0.70 to 0.25 in query function
+
+Issue: "EXPLAIN only works on single statement" in Supabase SQL Editor
+Fix: Use "Run" button not "Explain", or run statements one at a time
+
+Issue: Supabase "Query has destructive operations" warning
+Fix: Normal — click "Run this query" to confirm (it's the DROP TABLE statements)
+
+Issue: page.tsx TypeScript errors with Object.entries cast
+Fix: Changed to (["sentry", "comcast", "base44"] as SponsorMode[]).map(...)
+
+================================================================================
+12. STREAM SIMULATOR
+================================================================================
+
+File: scripts/stream-simulator.js
+Run: node scripts/stream-simulator.js (in separate terminal while npm run dev is running)
+
+Sends one random log from 11 templates every 5 seconds:
+  - 5 error logs (auth, payment, user-service, api-gateway, db-connector)
+  - 3 network logs (bandwidth, latency, DNS)
+  - 3 API logs (schema, orders endpoint, health-check)
+
+Output:
+  🆕 = new incident created
+  🔗 = clustered into existing incident
+  🚨 = alert triggered (critical/high severity)
+
+Ctrl+C to stop.
+
+================================================================================
+13. FEATURE ROADMAP (PRIORITIZED)
+================================================================================
+
+MUST ADD (Highest ROI):
+  1. Predictive Alert Engine
+     - Track event frequency per incident over time windows
+     - If rate doubles → auto-alert "Auth failures increasing 3x, outage forming"
+     - Add event_timestamps jsonb array to incidents table
+     - Compute rate-of-change on ingest
+
+  2. Resolution Timeline
+     - Log every action (ingest, search, feedback, status change) to timeline_events table
+     - Render as vertical timeline in incident detail view
+     - Shows full lifecycle of how incident was found → investigated → fixed
+
+  3. MTTR Dashboard (Mean Time to Resolution)
+     - Calculate resolved_at - first_seen for resolved incidents
+     - Show average, p50, p95
+     - One SQL query, one chart component
+     - Proves measurable value
+
+  4. Diff-Aware Reasoning
+     - When querying, also fetch most recent RESOLVED incident from same cluster
+     - Pass both to LLM: "Current vs last time — what's different?"
+     - One extra DB query, 10x better reasoning
+
+NICE TO HAVE:
+  5. Runbook Generator
+     - On resolve, auto-generate step-by-step fix instructions from timeline
+     - Store as runbook text on incident
+     - Display when similar incident fires next time
+
+  6. Blame Graph (Service Dependency Mapping)
+     - Extract service names from source/metadata
+     - When incidents share time window, draw edges
+     - D3 or mermaid directed graph
+
+  7. Anomaly Score on Ingest
+     - Track rolling avg embedding distance per source
+     - Flag logs >2 std deviations as anomalous
+     - Add anomaly_score float to memories
+
+  8. Webhook Outbound (Slack/Discord)
+     - On alert creation, POST to configurable webhook URL
+     - Even just Slack incoming webhooks is enough
+
+CRAZY BUT IMPRESSIVE:
+  9. "What If" Simulator
+     - Type: "What if auth service went down?"
+     - System queries all past auth-service incidents
+     - Builds cascade prediction with estimated impact
+     - Shows: "Payment-gateway fails in ~4 min, 12,400 users affected, MTTR: 23 min"
+
+  10. Live Incident War Room
+      - Single-screen crisis view: timeline, past incidents, AI fix, affected services
+      - Route: /dashboard/incident/[id]
+      - Composition of existing components in crisis layout
+
+================================================================================
+14. BRUTAL WEAKNESSES IDENTIFIED
+================================================================================
+
+1. Reactive not proactive — waits for user to search instead of alerting intelligently
+2. AI reasoning is generic — any team can pass results to GPT, no structured chain
+3. No temporal intelligence — doesn't detect time patterns (spikes at 9PM every Tuesday)
+4. Clustering is shallow — one-shot at ingest, no merging/splitting/reclassification
+5. No proof of value — can't show "saved 47 minutes" or "detected 3 min before alert"
+
+================================================================================
+15. HACKATHON STRATEGY (SENTRY × COMCAST × BASE44)
+================================================================================
+
+Same backend, three angles:
+
+Sentry judges:
+  - Switch to Sentry tab → search "null pointer"
+  - Show: root cause + commit reference + "fixed in a3f9b2c"
+  - Say: "We extend observability with AI memory"
+
+Comcast judges:
+  - Switch to Comcast tab → search "bandwidth spike"
+  - Show: prediction for tonight at 9:10 PM with 94% confidence
+  - Say: "We predict and explain network anomalies"
+
+Base44 judges:
+  - Switch to Base44 tab → search "schema rollback"
+  - Show: 2nd incident this month, CI fix recommendation
+  - Say: "We're a backend intelligence layer"
+
+Key pitch:
+"Today Sentry tells you an error happened. We tell you when it happened before,
+how it was fixed, and which commit resolved it."
+
+================================================================================
+16. DEMO SCRIPT FOR JUDGES
+================================================================================
+
+1. Open dashboard, Sentry tab
+2. Search "null pointer auth service"
+3. Show: root cause analysis + matching error + commit reference
+4. Say: "This crash happened 2 days ago — here's the fix we used then."
+
+5. Switch to Comcast tab
+6. Search "bandwidth spike"
+7. Show: prediction + pattern detection
+8. Say: "Every Tuesday and Friday at 9:10 PM, bandwidth spikes. We predict it."
+
+9. Switch to Base44 tab
+10. Search "schema rollback"
+11. Show: incident clustering + CI recommendation
+12. Say: "We don't just tell you it broke — we tell you why and how to prevent it."
+
+13. Live demo: Go to Ingest → paste a NEW error log
+14. Go to Incidents → show it auto-clustered
+15. Go to Alerts → show alert auto-fired
+16. Go to Query → search for it → get reasoning
+17. Say: "Ingest → cluster → alert → explain. In real time."
+
+================================================================================
+17. RESUME DESCRIPTION
+================================================================================
+
+Short:
+Built an AI-powered incident intelligence platform that ingests logs, clusters
+related incidents, and uses semantic search + LLM reasoning to identify root
+causes, suggest fixes, and improve over time.
+
+Strong (for internships):
+- Engineered a full-stack AI observability system using Next.js, Supabase (pgvector),
+  and OpenAI embeddings to ingest, cluster, and analyze system logs in real time.
+- Implemented hybrid semantic retrieval, incident clustering, and LLM-based root
+  cause analysis to transform raw logs into actionable insights.
+- Designed streaming ingestion pipeline to simulate real-time system monitoring
+  and enable continuous learning from production-like data.
+
+One-liner:
+Built a system that turns logs into actionable debugging intelligence using
+vector search and AI.
+
+================================================================================
+18. NEXT SESSION TODO
+================================================================================
+
+Priority order:
+1. Build predictive alert engine (rate-of-change detection)
+2. Add resolution timeline (timeline_events table + UI)
+3. Add MTTR dashboard metric
+4. Implement diff-aware reasoning (compare current vs past resolved incident)
+5. Deploy to Vercel (live URL for judges/portfolio)
+6. Polish landing page
+7. Add runbook generator
+8. Add blame graph visualization
+9. Record demo video for Devpost
+
+Technical debt:
+- Fix the 2 TypeScript warnings in page.tsx (non-blocking)
+- Consider adding error boundaries for API failures
+- Add loading skeletons for better UX
+- Clean up the {app} junk folder from Windows route group issue
+
+================================================================================
+END OF CONTEXT FILE
+================================================================================

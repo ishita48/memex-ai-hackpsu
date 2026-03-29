@@ -1,0 +1,403 @@
+================================================================================
+MEMEX AI — API PRODUCT CONTEXT
+================================================================================
+Last Updated: March 23, 2026
+Status: Working locally, tested with curl
+================================================================================
+
+WHAT IS THE API PRODUCT?
+================================================================================
+
+Memex AI is now a PLATFORM, not just a dashboard. Any external tool — VS Code
+extensions, Python scripts, CI/CD pipelines, Slack bots, CLI tools, other apps —
+can call your Memex AI backend using an API key to:
+
+  1. INGEST data (store logs/errors/events into the memory engine)
+  2. QUERY data (search memory and get AI reasoning)
+  3. Manage incidents, feedback, and alerts
+
+The dashboard still works the same. The API is an additional way to access
+the same backend. Everything goes to the same Supabase database.
+
+================================================================================
+FILES ADDED FOR API PRODUCT
+================================================================================
+
+3 files were added/modified:
+
+1. NEW: lib/api-auth.ts
+   - API key validation middleware
+   - Dashboard requests (same origin) bypass auth automatically
+   - External requests must include x-api-key header
+   - Checks against MEMEX_API_KEY env var
+
+2. NEW: app/docs/page.tsx
+   - Public API documentation page at /docs
+   - Shows every endpoint with request/response examples
+   - Integration examples: curl, Python SDK, Node.js, GitHub Actions, Sentry webhook
+   - Dark terminal aesthetic matching the rest of the app
+
+3. MODIFIED: app/api/ingest/route.ts
+   - Added: import { validateApiKey } from "@/lib/api-auth";
+   - Added: const auth = await validateApiKey(req); if (auth.error) return auth.error;
+   - Rest of the file unchanged
+
+4. MODIFIED: app/api/query/route.ts
+   - Added: import { validateApiKey } from "@/lib/api-auth";
+   - Added: const auth = await validateApiKey(req); if (auth.error) return auth.error;
+   - Rest of the file unchanged
+
+5. MODIFIED: .env.local
+   - Added: MEMEX_API_KEY=memex_sk_a7b3f9d2e1c4k8m5n0p6q9r2s7t4u1
+
+6. MODIFIED: app/page.tsx (landing page)
+   - Added "API Docs" link in the nav bar, right before <SignedOut>
+
+================================================================================
+HOW API AUTH WORKS
+================================================================================
+
+The auth logic lives in lib/api-auth.ts:
+
+  1. Request comes in to /api/ingest or /api/query
+  2. validateApiKey(req) checks:
+     a. Is this a same-origin request (dashboard)? → ALLOW (no key needed)
+     b. Does the request have x-api-key header? → Check against MEMEX_API_KEY env var
+     c. Also accepts Authorization: Bearer <key> format
+  3. If no key or wrong key → returns 401/403 error
+  4. If valid → returns { userId } and the route continues normally
+
+Dashboard users never see auth. It's invisible to them.
+External apps MUST send the key.
+
+================================================================================
+ENV VAR ADDED
+================================================================================
+
+In .env.local, this line was added:
+
+  MEMEX_API_KEY=memex_sk_a7b3f9d2e1c4k8m5n0p6q9r2s7t4u1
+
+This is a master API key. You made it up — it can be any random string.
+Anyone who has this key can call your API from anywhere.
+
+================================================================================
+API ENDPOINTS AVAILABLE
+================================================================================
+
+All endpoints accept JSON. External requests need x-api-key header.
+
+POST /api/ingest
+  Purpose: Store a new log/error/event
+  Auth: Required for external, auto-bypass for dashboard
+  Body: {
+    "type": "error",              // "error" | "network" | "api"
+    "source": "auth-service",     // where it came from
+    "content": "NullPointerException at AuthController.java:142...",
+    "metadata": {
+      "severity": "critical",     // "critical" | "high" | "medium" | "low"
+      "service": "auth-service",
+      "title": "NullPointerException in AuthController",
+      "commit": "a3f9b2c"         // optional
+    }
+  }
+  Response: {
+    "success": true,
+    "id": "uuid",
+    "incident_id": "uuid",
+    "is_new_incident": false,     // true = new incident, false = clustered
+    "alert_triggered": true,      // true if critical/high severity
+    "message": "Memory added to existing incident cluster"
+  }
+
+POST /api/query
+  Purpose: Search memory with AI reasoning
+  Auth: Required for external, auto-bypass for dashboard
+  Body: {
+    "question": "null pointer auth",   // natural language
+    "mode": "sentry"                   // "sentry" | "comcast" | "base44"
+  }
+  Response: {
+    "results": [ array of matching memories with similarity scores ],
+    "reasoning": "**Root Cause:** ...\n**Impact:** ...\n**Fix:** ...\n**Pattern:** ...",
+    "pattern": "2 related incidents detected spanning 3 days"  // or null
+  }
+
+GET /api/incidents?mode=sentry&status=open
+  Purpose: List grouped incidents
+  Auth: Not yet protected (add validateApiKey if needed)
+
+GET /api/incidents?id=<uuid>
+  Purpose: Get all memories for a specific incident
+
+PATCH /api/incidents
+  Purpose: Update incident status
+  Body: { "id": "uuid", "status": "resolved" }
+
+POST /api/feedback
+  Purpose: Rate a search result
+  Body: { "memory_id": "uuid", "action": "helpful" }  // or "not_helpful" or "resolve"
+
+GET /api/alerts?unread=true
+  Purpose: List alerts
+
+PATCH /api/alerts
+  Purpose: Acknowledge an alert
+  Body: { "id": "alert-uuid" }
+
+================================================================================
+TESTED AND CONFIRMED WORKING
+================================================================================
+
+Test command that was run successfully:
+
+  curl -X POST http://localhost:3000/api/query \
+    -H "Content-Type: application/json" \
+    -H "x-api-key: memex_sk_a7b3f9d2e1c4k8m5n0p6q9r2s7t4u1" \
+    -d '{"question":"auth","mode":"sentry"}'
+
+Response received:
+  {
+    "results": [{
+      "id": "80921700-887c-438d-8e61-339090c31850",
+      "type": "error",
+      "source": "NullPointerException",
+      "content": "NullPointerException in AuthController.java:142. Session expired during token refresh.",
+      "metadata": {"source":"NullPointerException","status":"new","severity":"critical","ingested_via":"dashboard-paste"},
+      "incident_id": "54dd56c0-721e-42aa-b9bb-15eb07345319",
+      "feedback_score": 0,
+      "resolved": true,
+      "created_at": "2026-03-23T04:52:13.936+00:00",
+      "similarity": 0.5992036904533943
+    }],
+    "reasoning": "**Root Cause:** A NullPointerException occurred in AuthController.java due to session expiration during token refresh.\n**Impact:** User authentication processes were interrupted, causing failed login attempts or session timeouts.\n**Fix:** Implement a null check for session validity before attempting token refresh in AuthController.java at line 142.\n**Pattern:** First occurrence — no pattern detected yet."
+  }
+
+================================================================================
+HOW TO USE THE API — EXAMPLES
+================================================================================
+
+--- CURL (terminal / command line) ---
+
+Ingest a new error:
+  curl -X POST http://localhost:3000/api/ingest \
+    -H "Content-Type: application/json" \
+    -H "x-api-key: memex_sk_a7b3f9d2e1c4k8m5n0p6q9r2s7t4u1" \
+    -d '{
+      "type": "error",
+      "source": "payment-service",
+      "content": "Timeout on Stripe webhook after 30s",
+      "metadata": {"severity": "high", "title": "Stripe webhook timeout"}
+    }'
+
+Search memory:
+  curl -X POST http://localhost:3000/api/query \
+    -H "Content-Type: application/json" \
+    -H "x-api-key: memex_sk_a7b3f9d2e1c4k8m5n0p6q9r2s7t4u1" \
+    -d '{"question": "stripe timeout", "mode": "sentry"}'
+
+Browse all (empty question):
+  curl -X POST http://localhost:3000/api/query \
+    -H "Content-Type: application/json" \
+    -H "x-api-key: memex_sk_a7b3f9d2e1c4k8m5n0p6q9r2s7t4u1" \
+    -d '{"question": "", "mode": "sentry"}'
+
+--- PYTHON ---
+
+  import requests
+
+  MEMEX_URL = "http://localhost:3000"
+  MEMEX_KEY = "memex_sk_a7b3f9d2e1c4k8m5n0p6q9r2s7t4u1"
+  HEADERS = {"Content-Type": "application/json", "x-api-key": MEMEX_KEY}
+
+  # Ingest
+  res = requests.post(f"{MEMEX_URL}/api/ingest", json={
+      "type": "error",
+      "source": "my-python-app",
+      "content": "ValueError: invalid literal for int() with base 10: 'abc'",
+      "metadata": {"severity": "medium", "title": "ValueError in parser"}
+  }, headers=HEADERS)
+  print(res.json())
+  # → {"success": true, "incident_id": "...", "is_new_incident": true, ...}
+
+  # Query
+  res = requests.post(f"{MEMEX_URL}/api/query", json={
+      "question": "ValueError parser",
+      "mode": "sentry"
+  }, headers=HEADERS)
+  data = res.json()
+  print(data["reasoning"])
+  # → "**Root Cause:** ..."
+
+--- JAVASCRIPT / NODE.JS ---
+
+  const MEMEX_URL = "http://localhost:3000";
+  const MEMEX_KEY = "memex_sk_a7b3f9d2e1c4k8m5n0p6q9r2s7t4u1";
+
+  // Ingest
+  const ingestRes = await fetch(`${MEMEX_URL}/api/ingest`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-api-key": MEMEX_KEY },
+    body: JSON.stringify({
+      type: "error",
+      source: "node-app",
+      content: "ECONNREFUSED 127.0.0.1:5432",
+      metadata: { severity: "high", title: "Database connection refused" }
+    })
+  });
+  console.log(await ingestRes.json());
+
+  // Query
+  const queryRes = await fetch(`${MEMEX_URL}/api/query`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-api-key": MEMEX_KEY },
+    body: JSON.stringify({ question: "database connection refused", mode: "base44" })
+  });
+  const data = await queryRes.json();
+  console.log(data.reasoning);
+
+--- BROWSER CONSOLE (for quick testing) ---
+
+  // Ingest
+  fetch('/api/ingest', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      type: 'error',
+      source: 'browser-test',
+      content: 'Test error from browser console',
+      metadata: { severity: 'low' }
+    })
+  }).then(r => r.json()).then(console.log)
+
+  // Query
+  fetch('/api/query', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ question: 'test error', mode: 'sentry' })
+  }).then(r => r.json()).then(console.log)
+
+  NOTE: Browser console calls are same-origin, so no API key needed.
+
+--- GITHUB ACTIONS (auto-report CI failures) ---
+
+  # .github/workflows/memex.yml
+  name: CI
+  on: push
+  jobs:
+    build:
+      runs-on: ubuntu-latest
+      steps:
+        - uses: actions/checkout@v4
+        - run: npm test
+        - name: Report failure to Memex AI
+          if: failure()
+          env:
+            MEMEX_URL: ${{ secrets.MEMEX_URL }}
+            MEMEX_API_KEY: ${{ secrets.MEMEX_API_KEY }}
+          run: |
+            curl -X POST $MEMEX_URL/api/ingest \
+              -H "Content-Type: application/json" \
+              -H "x-api-key: $MEMEX_API_KEY" \
+              -d "{
+                \"type\": \"error\",
+                \"source\": \"github-actions\",
+                \"content\": \"CI failed on ${{ github.ref }} - ${{ github.event.head_commit.message }}\",
+                \"metadata\": {
+                  \"severity\": \"high\",
+                  \"commit\": \"${{ github.sha }}\",
+                  \"repo\": \"${{ github.repository }}\",
+                  \"title\": \"CI failure on ${{ github.ref }}\"
+                }
+              }"
+
+--- SENTRY WEBHOOK (auto-ingest real Sentry errors) ---
+
+  // Create a webhook endpoint in your app or a separate service:
+  app.post('/webhook/sentry', async (req, res) => {
+    const event = req.body;
+    await fetch(MEMEX_URL + '/api/ingest', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': MEMEX_API_KEY,
+      },
+      body: JSON.stringify({
+        type: 'error',
+        source: event.project?.name || 'sentry',
+        content: event.message || event.title,
+        metadata: {
+          severity: event.level === 'fatal' ? 'critical' : event.level,
+          title: event.title,
+          url: event.url,
+          ingested_via: 'sentry-webhook'
+        },
+      }),
+    });
+    res.sendStatus(200);
+  });
+
+  // Then in Sentry → Settings → Webhooks → add your URL
+
+================================================================================
+DOCS PAGE
+================================================================================
+
+URL: http://localhost:3000/docs
+
+This is a public page (no auth needed to view) that shows:
+  - Authentication instructions
+  - Every API endpoint with request/response format
+  - curl examples
+  - Python SDK example
+  - Node.js example
+  - GitHub Actions integration
+  - Sentry webhook integration
+
+File: app/docs/page.tsx
+The page is self-contained with inline styles matching the dark terminal aesthetic.
+
+A link to /docs was added to the landing page nav bar (app/page.tsx)
+next to the sign-in button.
+
+================================================================================
+WHAT'S NOT YET PROTECTED
+================================================================================
+
+Currently only /api/ingest and /api/query have API key validation.
+These routes do NOT require a key yet:
+  - GET/PATCH /api/incidents
+  - POST /api/feedback
+  - GET/PATCH /api/alerts
+
+To protect them, add the same 2 lines at the top of each route:
+  import { validateApiKey } from "@/lib/api-auth";
+  // inside the handler:
+  const auth = await validateApiKey(req);
+  if (auth.error) return auth.error;
+
+================================================================================
+WHEN DEPLOYED (VERCEL)
+================================================================================
+
+After deploying to Vercel:
+  1. Set MEMEX_API_KEY in Vercel environment variables
+  2. Replace localhost:3000 with your-app.vercel.app in all examples
+  3. The docs page auto-serves at your-app.vercel.app/docs
+  4. External apps can call your production API from anywhere
+  5. VS Code extension can point to the deployed URL via memex.apiUrl setting
+
+================================================================================
+QUICK REFERENCE — WHAT TO TELL JUDGES
+================================================================================
+
+"Memex AI isn't just a dashboard — it's a platform with a public API.
+Any tool can integrate: VS Code extensions, CI/CD pipelines, Slack bots,
+Python scripts. Here's our API docs page showing every endpoint, and here's
+a live curl call proving it works."
+
+Then run the curl command live in front of them.
+
+================================================================================
+END
+================================================================================
