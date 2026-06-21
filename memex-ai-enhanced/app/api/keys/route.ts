@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
-import { randomUUID } from "crypto";
+import { randomUUID, createHash } from "crypto";
 
 // GET /api/keys — list all API keys for the user
 export async function GET(req: NextRequest) {
@@ -47,13 +47,14 @@ export async function POST(req: NextRequest) {
 
     const rawKey = `memex_sk_${randomUUID().replace(/-/g, "")}`;
     const keyPrefix = rawKey.slice(0, 14);
+    const keyHash = createHash("sha256").update(rawKey).digest("hex");
 
     try {
       const { data, error } = await supabase
         .from("api_keys")
         .insert({
           name: keyName,
-          key_hash: rawKey,
+          key_hash: keyHash,
           key_prefix: keyPrefix,
           is_active: true,
         })
